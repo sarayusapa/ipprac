@@ -29,6 +29,9 @@ def main():
     ap.add_argument("--config", default=None, help="YAML overriding defaults")
     ap.add_argument("--candidates", default=None, help="candidates_V2.csv for the FPR track")
     ap.add_argument("--workers", type=int, default=1)
+    ap.add_argument("--noise-hu", type=float, default=0.0,
+                    help="added-noise experiment: Gaussian noise std in HU (Sec. 11.2)")
+    ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--limit", type=int, default=None, help="only the first N scans (debug)")
     args = ap.parse_args()
 
@@ -41,7 +44,8 @@ def main():
     cfg.to_yaml(out / "config.yaml")
 
     cands = pd.read_csv(args.candidates) if args.candidates else None
-    tables, fpr, timings = run_batch(paths, cfg, cands, workers=args.workers)
+    tables, fpr, timings = run_batch(paths, cfg, cands, workers=args.workers,
+                                     noise_hu=args.noise_hu, seed=args.seed)
 
     tables.to_csv(out / "tracks.csv", index=False)
     sub = tables[tables["probability"] > 0][["seriesuid", "coordX", "coordY", "coordZ", "probability"]]
