@@ -14,7 +14,7 @@ P1 (the V-JEPA2 benchmark) is not implemented yet.
 
 ## Contents
 1. [Pipeline](#1-pipeline)
-2. [Results on LUNA16 subset0](#2-results-on-luna16-subset0)
+2. [Results on LUNA16](#2-results-on-luna16)
 3. [Where every parameter comes from](#3-where-every-parameter-comes-from)
 4. [Changes from the report and why](#4-changes-from-the-report-and-why)
 5. [Setup](#5-setup)
@@ -35,7 +35,7 @@ P1 (the V-JEPA2 benchmark) is not implemented yet.
 | 04 Slice tracking | 8.4 | `tracking.py` | Hungarian matching of blobs between consecutive slices. Gate = max(3 mm, 0.5·r); a gap of one slice is allowed. Each track is one 3D candidate. |
 | 05 Feature extraction | 8.5 | `features.py` | Per track: lifetime, aspect, drift ratio, sphere-profile fit against a tube fit, branching. **Vessels are removed using these features.** |
 | 06 Classification | 8.6 | `classify.py` | Score = product of soft rules, in [0, 1]. Each rejected track gets a readable reason, e.g. `rejected: lifetime 66.2 mm, aspect 18.3 (> 2.5), centre shifts 16.5 x radius (> 1), poor sphere fit`. |
-| Evaluation | 11 | `evaluation.py` | FROC, CPM, bootstrap 95% CI over scans, candidate recall. |
+| Evaluation | 11 | `evaluation.py`, `scripts/official_eval.py` | FROC, CPM, bootstrap 95% CI over scans, candidate recall. `official_eval.py` runs the official LUNA16 script; the two agree exactly. |
 
 **Classification rules (step 06)**
 
@@ -51,46 +51,85 @@ P1 (the V-JEPA2 benchmark) is not implemented yet.
 
 ---
 
-## 2. Results on LUNA16 subset0
+## 2. Results on LUNA16
 
-89 scans, 112 nodules. Scored with this repo's re-implementation of the LUNA16 matching rules (see §9). The 95% CIs come from 1,000 bootstrap resamples over scans.
+**All 888 scans** (10 official subsets, 1,186 nodules). Scores were checked with the **official LUNA16 evaluation script** (`scripts/official_eval.py`). It gives the same values as this repo's `evaluation.py` at all 7 FP rates, on both tracks. The 95% CIs come from 1,000 bootstrap resamples over scans.
 
-| Version | Detection CPM | FP-reduction CPM | Sens. @ 1 FP/scan | Sens. @ 8 FP/scan |
-|---|---|---|---|---|
-| v1: report parameters as written | 0.036 (0.014–0.062) | 0.085 (0.056–0.125) | 0.027 | 0.089 |
-| **v2: current** (drift ratio + LoG strength, §4) | **0.096 (0.061–0.135)** | **0.101 (0.068–0.143)** | **0.054** | **0.277** |
+**Main result**
 
-| Other numbers (v2) | |
+| Track | CPM (95% CI) | @0.125 | @0.25 | @0.5 | @1 | @2 | @4 | @8 |
+|---|---|---|---|---|---|---|---|---|
+| **Nodule detection** (P0 end to end) | **0.134 (0.119–0.151)** | 0.028 | 0.042 | 0.073 | 0.110 | 0.162 | 0.218 | 0.304 |
+| **FP reduction** (P0 scores `candidates_V2`) | **0.146 (0.131–0.163)** | 0.027 | 0.041 | 0.071 | 0.113 | 0.168 | 0.244 | 0.358 |
+
+| Other numbers | |
 |---|---|
-| **Candidate recall** (nodules hit by any track, any score) | **97.3%**; for comparison, ETROCAD in LUNA16 reached 92.9% |
-| Max sensitivity among scored tracks (score > 0) | 93.8% |
+| **Candidate recall** (nodules hit by any P0 track, any score) | **94.4%**; for comparison, ETROCAD in LUNA16 reached 92.9% |
+| Max sensitivity among scored tracks (score > 0) | 90.6% |
 | Tracks per scan | ~4,300 (~1,100 with score > 0) |
-| Run time | 48 s/scan on an Apple M1 Max, 1 core per scan (6 scans in parallel): preprocessing 6 s, lung mask 8 s, candidates 30 s, tracking + features + rules 4 s |
+| Run time | 46 s/scan on an Apple M1 Max, 1 core per scan: preprocessing 6 s, lung mask 8 s, candidates 29 s, tracking + features + rules 3 s. All 888 scans take ~2 h with 6 in parallel. |
 
-**Ablation** (report §11.2: rules added one at a time, v2)
+**Per subset** (the 10 official folds). P0 has no trained parts, so each subset is simply scored on its own.
+
+| Subset | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | **mean ± sd** |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| Nodules | 112 | 128 | 128 | 119 | 128 | 108 | 129 | 111 | 118 | 105 | |
+| Detection CPM | 0.096 | 0.176 | 0.180 | 0.163 | 0.112 | 0.126 | 0.143 | 0.135 | 0.100 | 0.105 | **0.134 ± 0.031** |
+| FP-reduction CPM | 0.101 | 0.195 | 0.198 | 0.169 | 0.132 | 0.134 | 0.165 | 0.140 | 0.099 | 0.124 | **0.146 ± 0.035** |
+| Candidate recall | 0.973 | 0.961 | 0.961 | 0.916 | 0.938 | 0.926 | 0.969 | 0.910 | 0.924 | 0.952 | 0.943 |
+
+Subset0 was used to debug the pipeline (§4). It is one of the weaker subsets, so those fixes did not inflate the overall result.
+
+**Development history** (subset0 only, detection track)
+
+| Version | Detection CPM | FP-reduction CPM |
+|---|---|---|
+| v1: report parameters as written | 0.036 (0.014–0.062) | 0.085 (0.056–0.125) |
+| v2: current (blob centre from LoG peak, drift ratio, LoG strength; §4) | 0.096 (0.061–0.135) | 0.101 (0.068–0.143) |
+
+**Ablation** (report §11.2: rules added one at a time, all 888 scans, detection track)
 
 | Rules | CPM | @0.125 | @0.25 | @0.5 | @1 | @2 | @4 | @8 |
 |---|---|---|---|---|---|---|---|---|
 | size only | 0.002 | 0.000 | 0.000 | 0.000 | 0.001 | 0.002 | 0.003 | 0.007 |
-| + lifetime/aspect | 0.000 | 0.000 | 0.000 | 0.000 | 0.000 | 0.000 | 0.000 | 0.000 |
-| + drift | 0.003 | 0.000 | 0.000 | 0.000 | 0.000 | 0.000 | 0.009 | 0.009 |
-| + sphere fit | 0.019 | 0.000 | 0.000 | 0.000 | 0.000 | 0.018 | 0.045 | 0.071 |
-| **+ LoG strength (P0)** | **0.096** | 0.009 | 0.018 | 0.027 | 0.054 | 0.116 | 0.170 | 0.277 |
-| + branching | 0.099 | 0.009 | 0.018 | 0.045 | 0.071 | 0.107 | 0.179 | 0.268 |
+| + lifetime/aspect | 0.000 | 0.000 | 0.000 | 0.000 | 0.000 | 0.000 | 0.001 | 0.003 |
+| + drift | 0.001 | 0.000 | 0.000 | 0.000 | 0.000 | 0.000 | 0.001 | 0.004 |
+| + sphere fit | 0.027 | 0.001 | 0.001 | 0.001 | 0.004 | 0.024 | 0.052 | 0.105 |
+| **+ LoG strength (P0)** | **0.134** | 0.028 | 0.042 | 0.073 | 0.110 | 0.162 | 0.218 | 0.304 |
+| + branching | 0.141 | 0.030 | 0.049 | 0.078 | 0.115 | 0.166 | 0.232 | 0.315 |
 
 <p align="center">
-<img src="docs/figures/froc_subset0.png" width="45%"> <img src="docs/figures/ablation_subset0.png" width="45%">
+<img src="docs/figures/froc_all.png" width="45%"> <img src="docs/figures/ablation_all.png" width="45%">
 </p>
+
+**False-positive breakdown** (report §11.2: the 100 highest-scoring FPs across all 888 scans; `scripts/fp_breakdown.py`)
+
+The labels below come from rules of thumb on the features and still need checking by hand in `outputs/p0_all/fp_breakdown/fp_labels.csv`.
+
+| Provisional type | Count | Median diameter | Median aspect | Median wall distance |
+|---|---|---|---|---|
+| Vessel | 91 | 13.3 mm | 0.72 | 6.3 mm |
+| Other (small round blobs) | 7 | 3.6 mm | 1.05 | 14.2 mm |
+| Wall | 2 | 6.8 mm | 0.52 | 2.5 mm |
+| Rib | 0 | – | – | – |
+
+![hilar vessel FP](docs/figures/fp_hilar_1.png)
+![hilar vessel FP](docs/figures/fp_hilar_2.png)
+![small vessel FP](docs/figures/fp_small_vessel.png)
+
+*Each sheet shows 7 axial slices through the FP, then coronal and sagittal views. Top two: large hilar vessels. They are long tubes in the coronal view, but because they run mostly within the slice plane and are 19–21 mm wide, they cross only ~5 axial slices, so aspect = lifetime/diameter is 0.4–0.8 and they look "round". Bottom: a small vessel cross-section that is very hard to tell from a 3 mm nodule.*
 
 **What the results show**
 
-- **Steps 01–04 work.** 97.3% of nodules end up as a track, and the lung mask keeps ribs out. Candidate generation is not the bottleneck.
-- **Step 06 is the bottleneck.** With about 4,300 tracks per scan, the rules must rank a nodule in the top 1–2 tracks of its scan to score well at low FP rates.
-- **Size and aspect barely move the CPM on their own.** Most false positives are short, round cross-sections of small vessels, and these pass both rules. Their scores tie at 1.0, so these rules can filter but cannot rank.
-- **The sphere fit is the strongest shape rule, but it is weak on real data.** The median `sphere_gain` for real nodules is only 0.07, and 27% of nodules fit a tube better than a sphere. Real nodules are not perfect spheres, and thick slices give few points to fit.
-- **LoG strength gives the biggest gain (0.019 → 0.096).** It is the detector's own confidence and gives a continuous ranking.
-- **Branching adds nothing significant** (0.099 against 0.096, well inside the CI), so it stays off.
-- **These numbers are in the range of the 2D classical systems in the report's survey,** and well below deep learning (CPM 0.93–0.95). The report expected this (§12).
+- **Ribs are solved.** None of the top 100 FPs is a rib: the lung mask removes them, as designed (report §8.2, §9).
+- **Candidate generation works.** 94.4% of nodules become a track, above the classical candidate detectors in the report's survey. It is not the bottleneck.
+- **Scoring is the bottleneck.** With ~4,300 tracks per scan, a nodule must rank in the top 1–2 tracks of its scan to count at low FP rates.
+- **Size, aspect and drift filter but cannot rank.** Most FPs are short, round cross-sections that pass these rules, so their scores tie at 1.0 and the three rules together give CPM ≈ 0.
+- **The sphere fit is the strongest shape rule, but weak on real data.** Over all 888 scans, the median `sphere_gain` for real nodules is only 0.09, and 21% of them fit a tube better than a sphere. Real nodules are irregular, and thick slices give few points to fit.
+- **LoG strength gives the biggest gain (0.027 → 0.134).**
+- **The main remaining FP source is large hilar vessels.** The aspect rule assumes vessels run along z. A wide vessel running within the slice plane breaks that assumption, and its strong LoG response (median 0.55, against 0.38 for real nodules) pushes it up the ranking.
+- **Branching adds +0.007**, inside the CI, so it stays off, matching the report's s1–s4 formula.
+- **P0 is well below deep learning** (CPM 0.930–0.952, report Table 2), as the report expected (§12). The classical systems in report §4.3 reach 80–88% sensitivity at 1–4 FPs/scan, but all of them end with a *trained* classifier. P0 uses none.
 
 **Example: the report's scan …456733 (Figure 1)**
 
@@ -98,6 +137,8 @@ P1 (the V-JEPA2 benchmark) is not implemented yet.
 ![strip](docs/figures/example_strip.png)
 
 Cyan: lung mask. Orange: LoG blobs. Yellow dashed: the annotated 12.7 mm nodule. On slice 33 the nodule touches a large hazy structure. In v1, region growing leaked into it, which moved the blob centroid and made the nodule look like it drifted 2.9 mm/slice: it ranked **423rd** in its scan. Taking the blob centre from the LoG peak (§4) fixed this, and the nodule now ranks **22nd**.
+
+**Added-noise experiment** (report §11.2): *running; results will be added here.*
 
 ---
 
@@ -211,6 +252,16 @@ python scripts/evaluate.py --run outputs/p0_s0 --annotations data/luna16/annotat
 # 4. Ablation: rescores tracks.csv, no need to rerun detection
 python scripts/ablation.py --run outputs/p0_s0 --annotations data/luna16/annotations.csv \
     --excluded data/luna16/annotations_excluded.csv
+
+# 5. Official LUNA16 evaluation script (Python 2 original, run under Python 3)
+python scripts/official_eval.py --run outputs/p0_s0
+
+# 6. FP breakdown: image sheets + label sheet for the top 100 false positives
+python scripts/fp_breakdown.py --run outputs/p0_s0 --data-root data/luna16 \
+    --annotations data/luna16/annotations.csv --excluded data/luna16/annotations_excluded.csv
+
+# 7. Added-noise experiment: same as step 2, with Gaussian noise added (std in HU)
+python scripts/run_p0.py --data-root data/luna16 --subsets 0 --out outputs/noise_50 --noise-hu 50 --workers 6
 ```
 
 To change a parameter, copy `configs/p0.yaml`, edit it, and pass `--config my.yaml`.
@@ -225,6 +276,8 @@ To change a parameter, copy `configs/p0.yaml`, edit it, and pass `--config my.ya
 | `config.yaml`, `timings.csv`, `seriesuids.txt` | For reproducibility |
 | `metrics.json`, `froc.png` | From `evaluate.py` |
 | `ablation.csv`, `ablation_froc.png` | From `ablation.py` |
+| `official_eval/` | Official script output: FROC curves, bootstrap CIs, `CADAnalysis.txt` |
+| `fp_breakdown/` | `fp_labels.csv` (fill in `label`), `fp_XXX.png` sheets, `summary.txt` |
 
 ---
 
@@ -245,7 +298,7 @@ src/lungnod/
   evaluation.py   FROC / CPM / bootstrap / candidate recall
   viz.py          figures
   synthetic.py    phantom for tests
-scripts/          download, run, evaluate, ablation, inspect, demo
+scripts/          download, run, evaluate, official_eval, ablation, fp_breakdown, inspect, demo
 tests/            unit tests + phantom end-to-end test
 configs/p0.yaml   default parameters
 docs/figures/     figures used in this README
@@ -256,18 +309,18 @@ docs/figures/     figures used in this README
 ## 9. Known limitations and next steps
 
 **Limitations**
-- **Scoring.** The rules rank poorly among about 4,300 tracks per scan; this is the main gap to published classical systems, which all use a trained classifier at this step (report §4.3).
+- **Scoring.** The rules rank poorly among ~4,300 tracks per scan; this is the main gap to published classical systems, which all use a trained classifier at this step (report §4.3).
+- **Large hilar vessels** are the main remaining FP source. They run within the slice plane, so lifetime/diameter does not flag them as tubes. The 10 mm rolling-ball closing may also pull them into the lung mask.
 - **Sphere fit is weak on real nodules.** They are irregular, and thick slices give 2–4 points to fit.
+- **LoG strength uses contrast,** so nodules with very low contrast against their surroundings score lower. The report said P0 would use shape only.
 - **Nodules attached to vessels** can merge into one long track (report §12).
 - **Ground-glass nodules** fall below the −600 HU region-growing threshold. For the report's stretch goal, set `candidates.fallback_disc: true`.
-- **Evaluation code.** `evaluation.py` re-implements the official LUNA16 matching rules. Final reported numbers should come from the official script in `data/luna16/evaluationScript/`.
-- **Results so far are on subset0 only** (89 of 888 scans).
 
 **Next steps**
-1. **FP breakdown** (report §11.2): label about 100 top-scoring FPs as vessel, rib, wall or other, to see what fools the rules.
-2. **All 10 subsets:** run P0 on 888 scans for the full CPM with CI. This takes about 2 hours with 6 workers.
-3. **Added-noise experiment** (low-dose-like images) and **LNDb** external test.
-4. **P1:** V-JEPA2 with an attentive probe, scoring the same candidates (`tracks.csv`) so the comparison with P0 is fair.
+1. **Check the FP labels by hand** in `outputs/p0_all/fp_breakdown/fp_labels.csv` (100 image sheets).
+2. **Added-noise experiment:** running (subset0, +25 / +50 / +100 HU).
+3. **LNDb external test** (report §7.2): needs registration.
+4. **P1:** V-JEPA2 + attentive probe on the same candidates. The model is checked (`facebook/vjepa2-vitl-fpc64-256`, 326M parameters, ~0.7 s per 16-frame clip on the M1 Max GPU in fp16). The candidate budget still needs deciding: the full official list (~750k clips) is not feasible locally.
 
 ---
 
