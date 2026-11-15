@@ -138,7 +138,20 @@ The labels below come from rules of thumb on the features and still need checkin
 
 Cyan: lung mask. Orange: LoG blobs. Yellow dashed: the annotated 12.7 mm nodule. On slice 33 the nodule touches a large hazy structure. In v1, region growing leaked into it, which moved the blob centroid and made the nodule look like it drifted 2.9 mm/slice: it ranked **423rd** in its scan. Taking the blob centre from the LoG peak (§4) fixed this, and the nodule now ranks **22nd**.
 
-**Added-noise experiment** (report §11.2): *running; results will be added here.*
+**Added-noise experiment** (report §11.2; subset0, 89 scans; `run_p0.py --noise-hu N`)
+
+Zero-mean Gaussian noise is added to the HU image before step 01, to imitate lower-dose scans. Noise std scales as 1/√dose and independent variances add. So with a typical noise level of ~25 HU, +25 HU is roughly half dose and +43 HU roughly quarter dose. Real low-dose noise is not white, so this is a simplification.
+
+| Added noise (std) | Detection CPM (95% CI) | FP-reduction CPM (95% CI) | Candidate recall | Tracks/scan |
+|---|---|---|---|---|
+| none | 0.096 (0.061–0.135) | 0.101 (0.068–0.143) | 97.3% | 4,326 |
+| +25 HU | 0.099 (0.064–0.138) | 0.108 (0.074–0.153) | 97.3% | 4,400 |
+| +50 HU | 0.106 (0.066–0.144) | 0.108 (0.074–0.155) | 94.6% | 4,570 |
+| +100 HU | 0.115 (0.075–0.156) | 0.121 (0.078–0.164) | 94.6% | 4,976 |
+
+- **No measurable loss up to +100 HU:** all CIs overlap. The small rise in CPM is within noise and should not be read as noise helping.
+- **Small effects:** candidate recall drops by 3 nodules (97.3% → 94.6%), and noise adds ~15% more tracks.
+- **Why it holds up:** the 3×3 median filter (step 01) and the σ²-normalised LoG (step 03) suppress speckle. The track rules need a blob to persist across slices, which random noise does not do.
 
 ---
 
@@ -318,9 +331,8 @@ docs/figures/     figures used in this README
 
 **Next steps**
 1. **Check the FP labels by hand** in `outputs/p0_all/fp_breakdown/fp_labels.csv` (100 image sheets).
-2. **Added-noise experiment:** running (subset0, +25 / +50 / +100 HU).
-3. **LNDb external test** (report §7.2): needs registration.
-4. **P1:** V-JEPA2 + attentive probe on the same candidates. The model is checked (`facebook/vjepa2-vitl-fpc64-256`, 326M parameters, ~0.7 s per 16-frame clip on the M1 Max GPU in fp16). The candidate budget still needs deciding: the full official list (~750k clips) is not feasible locally.
+2. **LNDb external test** (report §7.2): needs registration.
+3. **P1:** V-JEPA2 + attentive probe on the same candidates. The model is checked (`facebook/vjepa2-vitl-fpc64-256`, 326M parameters, ~0.7 s per 16-frame clip on the M1 Max GPU in fp16). The candidate budget still needs deciding: the full official list (~750k clips) is not feasible locally.
 
 ---
 
