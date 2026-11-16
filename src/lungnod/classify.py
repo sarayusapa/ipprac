@@ -8,6 +8,11 @@
     s_log     = min(peak LoG response / (2/e), 1)        detector confidence; 2/e is the
                                                        response of a full-contrast disc [11]
     s_branch  = exp(-0.5 * branches)                  (optional, off by default)
+    s_dot     = sigmoid((2.5 - inplane_aspect) / 0.3)  in-plane elongation from the 2D Hessian
+                (Li, Sone & Doi 2003): ratio q = |l_small|/|l_large| (median over slices),
+                inplane_aspect = sqrt(3/q - 2), the axis ratio of an ellipse with that q
+                (Gaussian blob model at the LoG scale sigma = r/sqrt2). Same threshold and
+                softness as the 3D aspect rule; contrast-invariant, so it can replace s_log.
 
     score = product of the enabled rules, in [0, 1]  -> ranks candidates for FROC.
 
@@ -24,8 +29,16 @@ from scipy.special import expit
 
 from .config import ClassifierConfig
 
-ALL_RULES = ("aspect", "drift", "sphere", "size", "min_slices", "log_strength", "branching")
+ALL_RULES = ("aspect", "drift", "sphere", "size", "min_slices", "log_strength", "branching", "dot")
 LOG_MAX_RESPONSE = 2 / np.e  # sigma^2-normalised LoG peak for a unit-contrast disc
+
+
+def inplane_aspect(q) -> np.ndarray:
+    """Axis ratio k of an ellipse whose Hessian ratio at the LoG scale is q.
+    Model: ellipse ~ Gaussian with variances (r/2)^2, (k r/2)^2, smoothed at sigma^2 = r^2/2
+    -> q = (1/4 + 1/2) / (k^2/4 + 1/2) = 3 / (k^2 + 2). Checked numerically on discs/ellipses."""
+    q = np.clip(np.asarray(q, float), 1e-6, 1.0)
+    return np.sqrt(np.maximum(3.0 / q - 2.0, 1.0))
 
 
 def rule_scores(f: Mapping, cfg: ClassifierConfig) -> dict[str, np.ndarray]:
@@ -36,6 +49,7 @@ def rule_scores(f: Mapping, cfg: ClassifierConfig) -> dict[str, np.ndarray]:
     diam = np.asarray(f["max_diameter_mm"], float)
     n_sl = np.asarray(f["n_slices"], float)
     br = np.asarray(f["branches"], float)
+    q = np.asarray(f["hess_ratio"], float) if "hess_ratio" in f else np.ones_like(aspect)
 
     s_sphere = expit((gain - cfg.sphere_center) / cfg.sphere_scale)
     s_sphere = np.where(np.isnan(gain), cfg.neutral_sphere_score, s_sphere)
@@ -47,6 +61,7 @@ def rule_scores(f: Mapping, cfg: ClassifierConfig) -> dict[str, np.ndarray]:
         "min_slices": (n_sl >= cfg.min_slices).astype(float),
         "log_strength": np.clip(log_resp / LOG_MAX_RESPONSE, 0.0, 1.0),
         "branching": np.exp(-cfg.branch_scale * br),
+        "dot": expit((cfg.aspect_thresh - inplane_aspect(q)) / cfg.aspect_scale),
     }
 
 
@@ -85,6 +100,8 @@ def explain(f: Mapping, s: Mapping, cfg: ClassifierConfig) -> str:
         reasons.append(f"weak blob (LoG strength {s['log_strength']:.2f})")
     if "branching" in rules and s["branching"] < 0.5:
         reasons.append(f"branches {int(f['branches'])}")
+    if "dot" in rules and s["dot"] < 0.5:
+        reasons.append(f"line-like in plane (in-plane aspect {float(inplane_aspect(f['hess_ratio'])):.1f})")
     prob = float(np.prod([s[r] for r in rules]))
     if prob >= cfg.accept_threshold:
         return "accepted"

@@ -112,6 +112,8 @@ def track_features(track: Track, spacing: np.ndarray, cfg: FeatureConfig) -> dic
             "wall_dist_mm": w.wall_dist_mm,
             "truncated_frac": float(np.mean([b.truncated for b in blobs])),
             "max_log_response": float(max(b.log_response for b in blobs)),
+            # median over slices: a nodule touching a vessel on one slice keeps its score
+            "hess_ratio": float(np.median([b.hess_ratio for b in blobs])),
         }
     )
     return feat

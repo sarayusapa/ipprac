@@ -49,5 +49,5 @@ classifier:
   - sphere
   - size
   - min_slices
-  - log_strength
+  - dot  # 2D Hessian dot-vs-line (Li, Sone & Doi 2003); log_strength is optional
   accept_threshold: 0.5

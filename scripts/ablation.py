@@ -23,6 +23,10 @@ STEPS = [
     ("+ sphere fit", ["size", "min_slices", "aspect", "drift", "sphere"]),
     ("+ LoG strength (P0)", ["size", "min_slices", "aspect", "drift", "sphere", "log_strength"]),
     ("+ branching", ["size", "min_slices", "aspect", "drift", "sphere", "log_strength", "branching"]),
+    # 2D Hessian dot-vs-line (Li, Sone & Doi 2003), shape-only replacement for LoG strength
+    ("sphere + dot", ["size", "min_slices", "aspect", "drift", "sphere", "dot"]),
+    ("sphere + dot + LoG", ["size", "min_slices", "aspect", "drift", "sphere", "dot", "log_strength"]),
+    ("sphere + dot + branching", ["size", "min_slices", "aspect", "drift", "sphere", "dot", "branching"]),
 ]
 
 
@@ -40,9 +44,12 @@ def main():
     ann = pd.read_csv(args.annotations)
     exc = pd.read_csv(args.excluded) if args.excluded else None
     tracks = pd.read_csv(run / "tracks.csv")
+    has_dot = "hess_ratio" in tracks.columns
 
     rows, curves = [], {}
     for label, rules in STEPS:
+        if "dot" in rules and not has_dot:
+            continue  # run made before the Hessian feature existed
         t = classify_table(tracks, cfg.classifier, rules=rules)
         sub = t[t["probability"] > 0]
         r = evaluate(sub, ann, exc, uids)

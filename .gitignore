@@ -1,8 +1,21 @@
+# Python
 .venv/
 __pycache__/
+*.py[cod]
 *.egg-info/
 .pytest_cache/
+.ipynb_checkpoints/
+
+# Data and results (large; regenerate with scripts/)
 data/
 outputs/
 *.raw
 *.mhd
+*.zip
+*.npy
+*.npz
+
+# Editors / OS
+.DS_Store
+.vscode/
+.idea/

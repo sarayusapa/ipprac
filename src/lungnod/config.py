@@ -78,8 +78,8 @@ class ClassifierConfig:  # Section 8.6
     min_slices: int = 2  # noise blobs: minimum lifetime of 2 slices
     branch_scale: float = 0.5  # s_branch = exp(-scale * branches)
     rules: list[str] = field(
-        default_factory=lambda: ["aspect", "drift", "sphere", "size", "min_slices", "log_strength"]
-    )  # add "branching" to use the branching feature
+        default_factory=lambda: ["aspect", "drift", "sphere", "size", "min_slices", "dot"]
+    )  # shape only. Optional: "log_strength" (contrast-dependent), "branching"
     accept_threshold: float = 0.5  # only for the accept/reject label; FROC uses the score
 
 

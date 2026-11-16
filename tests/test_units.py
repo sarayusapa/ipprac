@@ -86,3 +86,22 @@ def test_froc_cpm_toy():
     assert r["max_sensitivity"] == 0.5
     assert r["sens_at"][8.0] == 0.5
     assert r["sens_at"][0.125] <= 0.5
+
+
+def test_hessian_dot_vs_line():
+    """Disc -> ratio ~1 (in-plane aspect ~1, s_dot high); long bar -> ratio ~0 (s_dot ~0)."""
+    from lungnod.candidates import hess_ratio, hessian_stacks
+    from lungnod.classify import inplane_aspect
+
+    n = 121
+    yy, xx = np.mgrid[:n, :n] - n // 2
+    disc = ((xx**2 + yy**2) <= 8**2).astype(np.float32)
+    bar = ((np.abs(yy) <= 4) & (np.abs(xx) <= 50)).astype(np.float32)
+    r = np.array([8.0])
+    c = n // 2
+    for img, lo, hi in [(disc, 0.95, 1.0), (bar, 0.0, 0.1)]:
+        _, hyy, hxx, hxy = hessian_stacks(img, (1.0, 1.0), r if img is disc else np.array([4.0]))
+        q = hess_ratio(hyy[0, c, c], hxx[0, c, c], hxy[0, c, c])
+        assert lo <= q <= hi
+    assert inplane_aspect(1.0) == 1.0
+    assert abs(inplane_aspect(3 / (2.5**2 + 2)) - 2.5) < 1e-9

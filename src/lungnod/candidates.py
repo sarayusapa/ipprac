@@ -33,6 +33,9 @@ class Blob:
     log_response: float
     log_radius_mm: float
     truncated: bool  # region hit the growing window -> elongated / attached structure
+    # Hessian eigenvalue ratio |l_small| / |l_large| at the blob's LoG peak and scale
+    # (Li, Sone & Doi 2003, dot vs line enhancement): disc -> 1, line -> 0
+    hess_ratio: float = 1.0
 
     @property
     def diameter_mm(self) -> float:
@@ -63,13 +66,35 @@ def detect_candidates(
 
 def log_stack(img: np.ndarray, spacing_yx, radii: np.ndarray) -> np.ndarray:
     """Scale-normalised, sign-flipped LoG stack (bright blobs -> positive)."""
+    return hessian_stacks(img, spacing_yx, radii)[0]
+
+
+def hessian_stacks(img: np.ndarray, spacing_yx, radii: np.ndarray):
+    """Scale-normalised 2D Hessian at every scale. Returns (LoG, Hyy, Hxx, Hxy) stacks,
+    LoG = -(Hyy + Hxx) (identical to scipy's gaussian_laplace)."""
     sy, sx = spacing_yx
-    stack = np.empty((len(radii),) + img.shape, dtype=np.float32)
+    shape = (len(radii),) + img.shape
+    hyy, hxx, hxy = (np.empty(shape, dtype=np.float32) for _ in range(3))
     for i, r in enumerate(radii):
         s = r / np.sqrt(2.0)
         sig = (s / sy, s / sx)
-        stack[i] = -(sig[0] * sig[1]) * ndi.gaussian_laplace(img, sigma=sig, mode="nearest")
-    return stack
+        n = sig[0] * sig[1]
+        hyy[i] = n * ndi.gaussian_filter(img, sig, order=(2, 0), mode="nearest")
+        hxx[i] = n * ndi.gaussian_filter(img, sig, order=(0, 2), mode="nearest")
+        hxy[i] = n * ndi.gaussian_filter(img, sig, order=(1, 1), mode="nearest")
+    return -(hyy + hxx), hyy, hxx, hxy
+
+
+def hess_ratio(hyy: float, hxx: float, hxy: float) -> float:
+    """|lambda_small| / |lambda_large| for a bright structure (both eigenvalues < 0).
+    1 = isotropic dot, 0 = line; a saddle (one eigenvalue >= 0) counts as 0.
+    Axial pixels are square, so the ratio reflects physical shape."""
+    m = 0.5 * (hyy + hxx)
+    d = np.sqrt(0.25 * (hyy - hxx) ** 2 + hxy * hxy)
+    l_strong, l_weak = m - d, m + d  # l_strong <= l_weak
+    if l_strong >= 0:
+        return 0.0
+    return float(np.clip(l_weak / l_strong, 0.0, 1.0))
 
 
 def detect_slice(
@@ -97,7 +122,7 @@ def detect_slice(
     if cfg.mask_outside:
         img = np.where(m, img, 0.0).astype(np.float32)  # outside lung -> air
 
-    stack = log_stack(img, spacing_yx, radii)
+    stack, hyy, hxx, hxy = hessian_stacks(img, spacing_yx, radii)
     peaks = (stack == ndi.maximum_filter(stack, size=3, mode="nearest"))
     peaks &= stack > cfg.log_threshold
     peaks &= m[None]
@@ -190,6 +215,7 @@ def detect_slice(
                 log_response=float(resp[k]),
                 log_radius_mm=r_mm,
                 truncated=truncated,
+                hess_ratio=hess_ratio(hyy[si[k], py, px], hxx[si[k], py, px], hxy[si[k], py, px]),
             )
         )
     return blobs
