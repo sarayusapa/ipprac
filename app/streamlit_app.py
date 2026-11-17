@@ -7,7 +7,6 @@ Results are never stored: each scan is processed when its button is pressed.
 """
 from __future__ import annotations
 
-import json
 import sys
 from pathlib import Path
 
@@ -51,6 +50,9 @@ button[data-baseweb="tab"] {{ padding: 0.4rem 1.2rem !important; }}
 [data-testid="stBaseButton-secondary"] p {{ font-size: 1rem !important; white-space: nowrap !important; }}
 .side-info, .side-info p, .side-info li, .side-info b {{ font-size: 0.82rem !important; line-height: 1.45 !important; }}
 .side-info ul {{ margin: 0.15rem 0 0.6rem 1.0rem !important; padding: 0 !important; }}
+.rule-list p {{ margin: 0.5rem 0 0 0 !important; font-size: 1.05rem !important; }}
+.rule-list li {{ font-size: 0.92rem !important; line-height: 1.4 !important; color: #444; }}
+.rule-list ul {{ margin: 0.1rem 0 0 1.1rem !important; padding: 0 !important; }}
 [data-testid="stIconMaterial"], .material-symbols-rounded {{
   font-family: "Material Symbols Rounded" !important; }}
 </style>""",
@@ -239,7 +241,7 @@ if res is None:
     st.stop()
 
 # ------------------------------------------------------------------ after processing
-tab_det, tab_score, tab_pipe, tab_res = st.tabs(["Detection", "Scoring system", "Pipeline", "Result"])
+tab_det, tab_score, tab_pipe = st.tabs(["Detection", "Scoring system", "Pipeline"])
 
 with tab_det:
     left, right = st.columns([3, 2], gap="large")
@@ -272,8 +274,6 @@ with tab_det:
 
 # ------------------------------------------------------------------ tab 2: scoring
 with tab_score:
-    st.markdown("Six shape rules, each scoring 0 to 1 (1 = nodule-like). "
-                "**Final score = product of the six.** Candidates are ranked by final score.")
     if not len(top):
         st.info("No marks.")
     else:
@@ -300,7 +300,7 @@ with tab_score:
 
         a, b = st.columns([1, 1], gap="large")
         with a:
-            st.markdown("**The six rule scores for this mark**")
+            st.markdown("**Rule scores**")
             s = [row[f"s_{r}"] for r in dc.RULES]
             bar = go.Figure(go.Bar(x=s, y=[dc.RULE_TEXT[r][0] for r in dc.RULES], orientation="h",
                                    marker_color=NEUTRAL, text=[f"{v:.2f}" for v in s],
@@ -312,18 +312,18 @@ with tab_score:
             st.markdown(f"Score = {prod} = **{row.probability:.3f}**")
         with b:
             feats = {
-                "aspect": f"{row.lifetime_mm:.1f} mm tall, {row.max_diameter_mm:.1f} mm wide: aspect {row.aspect:.2f}",
-                "drift": f"centre moves {row.drift_ratio:.2f} radii from first to last slice",
-                "sphere": (f"sphere fits better than tube by {row.sphere_gain:.3f}" if row.sphere_fitted
-                           else "fewer than 4 slices, so no fit; neutral score 0.5"),
-                "size": f"diameter {row.max_diameter_mm:.1f} mm",
-                "min_slices": f"seen on {int(row.n_blobs)} slices",
-                "dot": f"average roundness q = {row.hess_ratio_mean:.2f}",
+                "aspect": f"{row.lifetime_mm:.1f} mm tall, {row.max_diameter_mm:.1f} mm wide (aspect {row.aspect:.2f})",
+                "drift": f"{row.drift_ratio:.2f} radii",
+                "sphere": (f"ball better than tube by {row.sphere_gain:.3f}" if row.sphere_fitted
+                           else "under 4 slices, neutral 0.5"),
+                "size": f"{row.max_diameter_mm:.1f} mm",
+                "min_slices": f"{int(row.n_blobs)} slices",
+                "dot": f"mean q = {row.hess_ratio_mean:.2f}",
             }
-            for r in dc.RULES:
-                st.markdown(f"**{dc.RULE_TEXT[r][0]}: {row[f's_{r}']:.2f}**. Measured: {feats[r]}.  \n"
-                            f"<span style='color:#555;font-size:0.92em'>{dc.RULE_TEXT[r][1]}</span>",
-                            unsafe_allow_html=True)
+            st.markdown("<div class='rule-list'>" + "".join(
+                f"<p><b>{dc.RULE_TEXT[r][0]}</b> &nbsp;{row[f's_{r}']:.2f}</p>"
+                f"<ul><li>{dc.RULE_TEXT[r][1]}</li><li>measured: {feats[r]}</li></ul>"
+                for r in dc.RULES) + "</div>", unsafe_allow_html=True)
 
         bl = res["tracks"][row.track_id]
         st.markdown("**Radius across slices and roundness per slice**")
@@ -388,29 +388,3 @@ with tab_pipe:
         "**7. Tracking.** Blobs on neighbouring slices are linked into 3D objects (Hungarian matching; "
         "a blob may link to one within max(3 mm, half its radius); one missing slice allowed).  \n"
         "**8. Shape features and 9. scoring.** See the Scoring system tab.")
-
-# ------------------------------------------------------------------ tab 4: result
-with tab_res:
-    st.markdown("### Our method on all 888 LUNA16 scans (1,186 nodules)")
-    m = dc.ROOT / "outputs" / "p0_all_v6" / "metrics.json"
-    if m.exists():
-        mj = json.loads(m.read_text())
-        sub = mj.get("submission", {})
-        sens = sub.get("sens_at", {})
-        rows = [("CPM (average sensitivity at 1/8 to 8 false alarms per scan)", f"{sub.get('cpm', float('nan')):.3f}")]
-        rows += [(f"Sensitivity at {k} false alarms per scan", f"{v:.3f}") for k, v in sens.items()]
-        rows.append(("Nodules with at least one candidate", f"{mj.get('candidate_recall_all_tracks', float('nan')):.3f}"))
-        st.table(pd.DataFrame(rows, columns=["Measure", "Value"]))
-    st.markdown("""
-**Comparison on the same 89 LUNA16 scans**
-
-| Method | Learns from labels | CPM |
-|---|---|---|
-| Our method (image processing pipeline) | no | 0.297 |
-| CT-FM 3D detector, 1 epoch | yes | 0.31 to 0.35 |
-| MONAI RetinaNet, fully trained | yes | 0.819 |
-
-""")
-    froc = dc.ROOT / "docs" / "figures" / "froc_all.png"
-    if froc.exists():
-        st.image(str(froc), caption="FROC curve on all 888 scans", width=650)

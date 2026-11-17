@@ -22,17 +22,12 @@ CFG_PATH = ROOT / "configs" / "p0.yaml"
 
 RULES = ["aspect", "drift", "sphere", "size", "min_slices", "dot"]
 RULE_TEXT = {
-    "aspect": ("Aspect", "How long the object lasts across slices vs. how wide it is. "
-               "A ball is about as tall as it is wide (aspect ≈ 1); a vessel running through "
-               "the slices lasts much longer than its width."),
-    "drift": ("Drift", "How far the centre moves sideways from the first to the last slice, "
-              "in units of the radius. A ball stays put; a slanted vessel slides across."),
-    "sphere": ("Sphere fit", "Does the radius grow and then shrink across slices like slices "
-               "of a ball, or stay constant like a tube?"),
-    "size": ("Size", "Diameter must be between 3 and 30 mm (the LUNA16 nodule range)."),
-    "min_slices": ("Min slices", "Must appear on at least 2 slices."),
-    "dot": ("Dot vs line", "On each slice, is the blob round (Hessian ratio q ≈ 1) or "
-            "stretched like a vessel seen from the side (q ≈ 0)? Score = q²."),
+    "aspect": ("Aspect", "height across slices vs width (ball ≈ 1)"),
+    "drift": ("Drift", "sideways shift of the centre, in radii"),
+    "sphere": ("Sphere fit", "radius profile of a ball vs a tube"),
+    "size": ("Size", "diameter within 3–30 mm"),
+    "min_slices": ("Min slices", "present on at least 2 slices"),
+    "dot": ("Dot vs line", "roundness on each slice, score = q²"),
 }
 
 
