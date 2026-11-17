@@ -114,6 +114,11 @@ def track_features(track: Track, spacing: np.ndarray, cfg: FeatureConfig) -> dic
             "max_log_response": float(max(b.log_response for b in blobs)),
             # median over slices: a nodule touching a vessel on one slice keeps its score
             "hess_ratio": float(np.median([b.hess_ratio for b in blobs])),
+            # alternative summaries, for experiments only
+            "hess_ratio_mean": float(np.mean([b.hess_ratio for b in blobs])),
+            "hess_ratio_min": float(np.min([b.hess_ratio for b in blobs])),
+            "hess_ratio_widest": float(w.hess_ratio),
+            "hess_ratio_strongest": float(max(blobs, key=lambda b: b.log_response).hess_ratio),
         }
     )
     return feat

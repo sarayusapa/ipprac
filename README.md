@@ -8,7 +8,7 @@ P0 uses **no machine learning**. Every step is a fixed algorithm or a hand-set r
 - A **vessel** (a tube) lasts many slices, keeps the same width, and drifts sideways.
 - **Ribs** lie outside the lung mask, so they never become candidates.
 
-P1 (the V-JEPA2 benchmark) is not implemented yet.
+`dl/` holds the 3D deep-learning detectors used for comparison (MONAI RetinaNet with ResNet-50 or CT-FM backbones). `app/` is an interactive demo (Streamlit) that runs the pipeline on a scan and shows every step.
 
 ---
 
@@ -41,12 +41,12 @@ P1 (the V-JEPA2 benchmark) is not implemented yet.
 
 | Rule | Formula | Rejects |
 |---|---|---|
-| s_aspect | sigmoid((2.5 − lifetime/diameter) / 0.3) | Long vessels running along z |
+| s_aspect | sigmoid((2.5 − max(a, 1/a)) / 0.3), a = lifetime/diameter (a sphere has a ≈ 1) | Long vessels running along z, and flat objects shorter in z than they are wide |
 | s_drift | sigmoid((1.0 − lateral shift/radius) / 0.2) | Slanted vessels |
-| s_sphere | sigmoid(sphere_gain / 0.05), or 0.5 if the track has fewer than 3 slices | Constant-width tubes |
+| s_sphere | sigmoid(sphere_gain / 0.05), or 0.5 if the track has fewer than 4 slices | Constant-width tubes |
 | s_size | 1 if 3 mm ≤ diameter ≤ 30 mm, else 0 | Noise and large structures |
 | s_min_slices | 1 if the track spans ≥ 2 slices, else 0 | Single-slice noise |
-| s_dot | sigmoid((2.5 − in-plane aspect) / 0.3), in-plane aspect = √(3/q − 2), q = \|λ_small\|/\|λ_large\| of the 2D Hessian at the blob's LoG peak and scale (median over the track's slices) | Vessels lying in the slice plane (Li, Sone & Doi [9]) |
+| s_dot | q², q = \|λ_small\|/\|λ_large\| of the 2D Hessian at the blob's LoG peak and scale (median over the track's slices). q² is Li's 2D dot filter \|λ₂\|²/\|λ₁\| divided by \|λ₁\| (contrast removed); no parameter | Vessels lying in the slice plane (Li, Sone & Doi [9]) |
 | s_log (off by default) | min(peak LoG response / (2/e), 1) | Weak, low-contrast blobs (uses contrast, not shape) |
 | s_branch (off by default) | exp(−0.5 · branches) | Vessel junctions |
 
@@ -62,10 +62,18 @@ All default rules use shape only; none uses brightness.
 
 | Track | CPM (95% CI) | @0.125 | @0.25 | @0.5 | @1 | @2 | @4 | @8 |
 |---|---|---|---|---|---|---|---|---|
-| **Nodule detection** (P0 end to end) | **0.188 (0.171–0.206)** | 0.049 | 0.066 | 0.096 | 0.158 | 0.228 | 0.312 | 0.410 |
-| **FP reduction** (P0 scores `candidates_V2`) | **0.214 (0.196–0.232)** | 0.052 | 0.076 | 0.116 | 0.185 | 0.260 | 0.355 | 0.453 |
+| **Nodule detection** (P0 v6, end to end) | **0.324 (0.298–0.348)** | 0.139 | 0.185 | 0.244 | 0.317 | 0.395 | 0.462 | 0.524 |
+| FP reduction (P0 **v5** scores `candidates_V2`; not yet rerun for v6) | 0.324 | – | – | – | – | – | – | – |
 
-Previous version (LoG strength instead of the Hessian dot rule): detection 0.134 (0.119–0.151), FP reduction 0.146 (0.131–0.163). The CIs do not overlap.
+| Version | Detection CPM (95% CI) |
+|---|---|
+| v2: LoG strength rule | 0.134 (0.119–0.151) |
+| v3: Hessian dot rule as a sigmoid on in-plane aspect | 0.188 (0.171–0.206) |
+| v4: dot = q², symmetric aspect rule | 0.289 (0.265–0.313) |
+| v5: sphere fit only with ≥ 4 slices | 0.306 (0.280–0.328) |
+| **v6: dot ratio averaged over the track's slices** | **0.324 (0.298–0.348)** |
+
+v4–v6 came from experiments on the rule forms only: decisions on subsets 0–4, checked on 5–9, with no parameter values picked from the data (`scripts/sweep.py`, `scripts/sweep_forms.py`). All report parameters were swept and are within about 0.01 of their best value. The per-subset table, ablation, figures and FP breakdown below are still from **v3**. v4–v6 numbers come from re-scoring stored tracks with `scripts/rescore.py`; a fresh full run gives the same tracks.
 
 | Other numbers | |
 |---|---|
@@ -91,7 +99,8 @@ Subset0 was used to debug the pipeline (§4). It is one of the weaker subsets, s
 |---|---|---|
 | v1: report parameters as written | 0.036 (0.014–0.062) | 0.085 (0.056–0.125) |
 | v2: blob centre from LoG peak, drift ratio, LoG strength (§4) | 0.096 (0.061–0.135) | 0.101 (0.068–0.143) |
-| v3: current (Hessian dot rule replaces LoG strength; §4) | 0.162 | – |
+| v3: Hessian dot rule replaces LoG strength (§4) | 0.162 | – |
+| v4 (dot = q², symmetric aspect) | 0.253 | – |
 
 **Ablation** (report §11.2: rules added one at a time, all 888 scans, detection track)
 
@@ -184,13 +193,15 @@ Our guide's feedback was that parameters must come from research or theory, not 
 | Sub-pixel peak | quadratic fit | Standard scale-space peak refinement (Lowe, SIFT, IJCV 2004) |
 | Tracking gate | max(3 mm, 0.5·r) | Report §8.4 |
 | Gap | 1 slice | Report §8.4 |
-| Aspect threshold | 2.5 | Report §8.5–8.6: a sphere has aspect ≈ 1, a vessel much more |
+| Aspect threshold | 2.5, applied to max(aspect, 1/aspect) | Report §8.5–8.6: a sphere has aspect ≈ 1, a vessel much more. The same reasoning applies on the other side: an object much flatter than it is wide is not a ball either |
 | **Drift ratio threshold** | **1.0** | **Geometry.** A sphere's centre does not move. If the centre moves by more than the object's radius, the first and last cross-sections no longer contain each other's centre, so the object is not a ball. |
 | Sigmoid softness | 0.2 × threshold (drift); 0.3 (aspect) | Same softness-to-threshold ratio the report uses (0.1/0.5 = 0.2) |
 | Sphere radius bound | R ≤ 1.3·√(r_max² + (dz/2)²) | Geometry: the equator can fall between two slices. Without a bound, a huge sphere fits a tube perfectly. |
-| Sphere neutral score | 0.5 | Tracks with fewer than 3 slices cannot be fitted (report §8.5) |
-| **Dot rule: q → in-plane aspect** | **k = √(3/q − 2)** | **Geometry + Li, Sone & Doi [9].** Model the cross-section as an ellipse with axes r and k·r (Gaussian with variances r²/4 and k²r²/4) smoothed at the LoG scale σ² = r²/2. The Hessian eigenvalues at the centre are ∝ 1/(variance + σ²), so q = (1/4 + 1/2)/(k²/4 + 1/2) = 3/(k² + 2). Checked numerically on binary ellipses (r = 2–8 mm): q = 1.00 at k = 1, 0.24–0.36 at k = 2.5. |
-| **Dot rule threshold** | **in-plane aspect 2.5, softness 0.3** | Same values as the report's aspect rule (§8.6): the same "longer than 2.5× its width" test, applied within the slice instead of along z. No new parameter. |
+| Sphere neutral score | 0.5 | Tracks too short to fit (report §8.5) |
+| Sphere fit minimum | 4 slices (report: 3) | Degrees of freedom: the fit has 2 parameters, so 3 points leave only 1 and any small-big-small profile fits a sphere |
+| **Dot rule score** | **s_dot = q²** | **Li, Sone & Doi [9]:** their 2D dot filter is \|λ₂\|²/\|λ₁\|; dividing by \|λ₁\| removes contrast and leaves q². No parameter. |
+| Optional sigmoid form (`dot_form: sigmoid`, v3): q → in-plane aspect | k = √(3/q − 2) | **Geometry + Li, Sone & Doi [9].** Model the cross-section as an ellipse with axes r and k·r (Gaussian with variances r²/4 and k²r²/4) smoothed at the LoG scale σ² = r²/2. The Hessian eigenvalues at the centre are ∝ 1/(variance + σ²), so q = (1/4 + 1/2)/(k²/4 + 1/2) = 3/(k² + 2). Checked numerically on binary ellipses (r = 2–8 mm): q = 1.00 at k = 1, 0.24–0.36 at k = 2.5. |
+| Optional sigmoid form: threshold | in-plane aspect 2.5, softness 0.3 | Same values as the report's aspect rule (§8.6): the same "longer than 2.5× its width" test, applied within the slice instead of along z. No new parameter. |
 | LoG strength normaliser (optional rule) | 2/e ≈ 0.736 | Lindeberg [11]: the maximum σ²-normalised LoG response of a unit-contrast disc (same derivation as σ = r/√2). Checked numerically: 0.730–0.736. |
 | Size range | 3–30 mm | LUNA16/LIDC nodule definition [7] |
 | Min lifetime | 2 slices | Report §9 (noise blobs) |
@@ -207,7 +218,8 @@ Each change came from looking at a failure on real data, not from searching for 
 |---|---|
 | **Blob centre = LoG peak with sub-pixel refinement**, and the region-growing area is clipped to 1.5 × LoG radius | Region growing leaks into attached vessels and opacities (the report's own known weakness, §12). The leak moved centroids and created false "drift", e.g. Figure 1's nodule went from rank 423 to rank 22. |
 | **Drift = line-fit lateral shift / radius, threshold 1** (the report used mean shift in mm/slice, threshold 0.5) | 1. Subset0 has slices from 0.5 to 2.5 mm thick, so "0.5 mm per slice" allows different vessel angles in different scans (about 11° at 2.5 mm, about 45° at 0.5 mm). 2. Real nodules had a median per-slice drift of 0.62 mm, so the old rule was the main reason for rejecting 73 of 109 detected nodules. With the new rule, drift is the main reason for only 12. The old value is still saved as `drift_mm_per_slice`. |
-| **New rule: Hessian dot vs line** (Li, Sone & Doi [9], from the report's survey) | The FP breakdown showed most top FPs were hilar vessels lying in the slice plane, which the z-direction rules cannot see. The rule measures in-plane elongation, ignores contrast, and reuses the aspect rule's threshold. Detection CPM 0.134 → 0.188 on all 888 scans. |
+| **New rule: Hessian dot vs line** (Li, Sone & Doi [9], from the report's survey) | The FP breakdown showed most top FPs were hilar vessels lying in the slice plane, which the z-direction rules cannot see. The rule measures in-plane elongation and ignores contrast. Detection CPM 0.134 → 0.188 on all 888 scans as a sigmoid (v3), and higher still with the parameter-free q² form (v4). |
+| **v4: dot score = q², aspect rule symmetric** | The rules only rank, and a sigmoid at 2.5 saturates at ≈ 1 for most round tracks, so they tie; the continuous q² keeps the ordering. A diagnosis of the top FPs showed they are flatter than they are wide (median aspect 0.65 vs 0.97 for nodules), which the one-sided aspect rule ignored. Detection CPM 0.188 → 0.289.  |
 | **LoG strength rule: tried, now optional** | v2 used it to rank the many round, short FPs (0.027 → 0.134), but it uses contrast, while the report says P0 uses only shape. The dot rule replaces it with a better score. It can still be added (0.228) at the cost of scoring very low-contrast nodules lower. |
 | **Lung mask:** 3D removal of small air components, and closing done per lung | Removes bowel gas below the diaphragm, and stops the 10 mm closing from joining the two lungs. |
 | **LoG input:** outside-lung pixels set to air | Removes strong false responses at the chest wall. |
@@ -230,6 +242,16 @@ python scripts/demo_synthetic.py  # runs P0 on the phantom, no data needed
 ```
 
 `src/lungnod/synthetic.py` builds a phantom chest: body, two lungs, ribs, an 8 mm and a 6 mm nodule, and a straight and a slanted vessel. Nodules and vessels have the same HU, so only shape across slices can separate them. P0 accepts both nodules and rejects both vessels and all ribs.
+
+### Demo app
+
+```bash
+uv pip install -e ".[demo]" --python .venv/bin/python
+python app/prepare_demo.py --run outputs/p0_all_v6 --data-root data/luna16   # once: builds the scan list
+streamlit run app/streamlit_app.py
+```
+
+Pick a scan and press **Run pipeline on scan** (about 18 s on a 10-core laptop; the per-slice steps run in threads). Tabs: detections on the CT with each mark's verdict against the ground truth, the six rule scores of any mark, every pipeline step on the current slice, and the overall results. Needs the LUNA16 scans in `data/luna16` and a full P0 run for the scan list.
 
 ---
 
@@ -326,7 +348,9 @@ src/lungnod/
   evaluation.py   FROC / CPM / bootstrap / candidate recall
   viz.py          figures
   synthetic.py    phantom for tests
-scripts/          download, run, evaluate, official_eval, ablation, fp_breakdown, inspect, demo
+scripts/          download, run, evaluate, official_eval, ablation, rescore, sweeps, fp_breakdown, inspect, demo
+app/              Streamlit demo (streamlit_app.py, demo_core.py, prepare_demo.py)
+dl/               3D deep-learning detectors for comparison (MONAI RetinaNet; ResNet-50 / CT-FM)
 tests/            unit tests + phantom end-to-end test
 configs/p0.yaml   default parameters
 docs/figures/     figures used in this README

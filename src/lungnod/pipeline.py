@@ -111,6 +111,7 @@ def score_candidate_list(
     vox = scan.world_to_voxel(cands[["coordX", "coordY", "coordZ"]].to_numpy())
     for (cz, cy, cx), (_, row) in zip(vox, cands.iterrows()):
         best = 0.0
+        linked = []
         for t in result.tracks:
             if not (t.first_z - 1 <= cz <= t.last_z + 1):
                 continue
@@ -120,6 +121,7 @@ def score_candidate_list(
             d = np.hypot((b.y - cy) * sy, (b.x - cx) * sx)
             if d <= max(cfg.tracking.gate_min_mm, b.radius_mm):
                 best = max(best, prob_by_id[t.track_id])
+                linked.append(t.track_id)
         out.append(
             {
                 "seriesuid": scan.seriesuid,
@@ -127,6 +129,9 @@ def score_candidate_list(
                 "coordY": row["coordY"],
                 "coordZ": row["coordZ"],
                 "probability": best,
+                # tracks passing through this candidate: lets the FPR track be re-scored
+                # for new rules without re-running detection
+                "track_ids": ";".join(map(str, linked)),
                 **({"class": row["class"]} if "class" in row else {}),
             }
         )

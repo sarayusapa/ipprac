@@ -56,7 +56,9 @@ class TrackingConfig:  # Section 8.4
 
 @dataclass
 class FeatureConfig:  # Section 8.5
-    min_fit_slices: int = 3  # shorter tracks get a neutral sphere score
+    # >= 4 points: the fit has 2 parameters (R, z0), so 3 points leave 1 degree of freedom and
+    # any small-big-small profile "fits" a sphere. Shorter tracks get the neutral score.
+    min_fit_slices: int = 4
     sphere_radius_tolerance: float = 1.3  # R <= tol * sqrt(r_max^2 + (dz/2)^2)
 
 
@@ -64,12 +66,26 @@ class FeatureConfig:  # Section 8.5
 class ClassifierConfig:  # Section 8.6
     aspect_thresh: float = 2.5
     aspect_scale: float = 0.3
+    # A sphere has lifetime ~ diameter (aspect ~ 1). Symmetric: also penalise objects much
+    # flatter than they are wide (aspect < 1/2.5), i.e. score max(aspect, 1/aspect).
+    aspect_symmetric: bool = True
     # drift_ratio = lateral shift along the track / radius. Above 1 the centre has moved
     # by more than the object's own radius: first and last cross-sections no longer
     # contain each other's centre -> not a sphere. Scale = 0.2 x threshold, the same
     # softness ratio the report uses (0.1 / 0.5).
     drift_thresh: float = 1.0
     drift_scale: float = 0.2
+    # dot rule (2D Hessian, Li, Sone & Doi 2003). q = |l_small| / |l_large|.
+    #   "ratio_sq": s_dot = q^2 = Li's 2D dot filter |l2|^2/|l1| divided by |l1| (contrast-
+    #               normalised); no parameter. Default.
+    #   "sigmoid":  s_dot = sigmoid((dot_thresh - in-plane aspect) / dot_scale), in-plane
+    #               aspect = sqrt(3/q - 2); same threshold as the aspect rule.
+    dot_form: str = "ratio_sq"
+    # how q is summarised over the track's slices: "mean" (v6; beat median on DEV and TEST),
+    # "median", "min", "widest", "strongest"
+    dot_aggregate: str = "mean"
+    dot_thresh: float = 2.5
+    dot_scale: float = 0.3
     sphere_center: float = 0.0  # sphere_gain = nrmse_tube - nrmse_sphere
     sphere_scale: float = 0.05
     neutral_sphere_score: float = 0.5

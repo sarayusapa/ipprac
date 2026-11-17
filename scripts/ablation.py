@@ -11,22 +11,24 @@ from pathlib import Path
 
 import pandas as pd
 
-from lungnod.classify import classify_table
+from lungnod.classify import combine, rule_scores
 from lungnod.config import P0Config
 from lungnod.evaluation import evaluate
 from lungnod.viz import plot_froc
 
+_B = ["size", "min_slices"]
 STEPS = [
-    ("size only", ["size", "min_slices"]),
-    ("+ lifetime/aspect", ["size", "min_slices", "aspect"]),
-    ("+ drift", ["size", "min_slices", "aspect", "drift"]),
-    ("+ sphere fit", ["size", "min_slices", "aspect", "drift", "sphere"]),
-    ("+ LoG strength (P0)", ["size", "min_slices", "aspect", "drift", "sphere", "log_strength"]),
-    ("+ branching", ["size", "min_slices", "aspect", "drift", "sphere", "log_strength", "branching"]),
-    # 2D Hessian dot-vs-line (Li, Sone & Doi 2003), shape-only replacement for LoG strength
-    ("sphere + dot", ["size", "min_slices", "aspect", "drift", "sphere", "dot"]),
-    ("sphere + dot + LoG", ["size", "min_slices", "aspect", "drift", "sphere", "dot", "log_strength"]),
-    ("sphere + dot + branching", ["size", "min_slices", "aspect", "drift", "sphere", "dot", "branching"]),
+    ("size only", _B),
+    ("+ lifetime/aspect", _B + ["aspect"]),
+    ("+ drift", _B + ["aspect", "drift"]),
+    ("+ sphere fit", _B + ["aspect", "drift", "sphere"]),
+    # 2D Hessian dot-vs-line (Li, Sone & Doi 2003): the last shape rule -> P0 default
+    ("+ dot (P0)", _B + ["aspect", "drift", "sphere", "dot"]),
+    # optional rules, each added to P0
+    ("P0 + branching", _B + ["aspect", "drift", "sphere", "dot", "branching"]),
+    ("P0 + LoG strength (uses contrast)", _B + ["aspect", "drift", "sphere", "dot", "log_strength"]),
+    # earlier version (v2): LoG strength instead of the dot rule
+    ("v2: sphere fit + LoG strength", _B + ["aspect", "drift", "sphere", "log_strength"]),
 ]
 
 
@@ -50,8 +52,8 @@ def main():
     for label, rules in STEPS:
         if "dot" in rules and not has_dot:
             continue  # run made before the Hessian feature existed
-        t = classify_table(tracks, cfg.classifier, rules=rules)
-        sub = t[t["probability"] > 0]
+        prob = combine(rule_scores(tracks, cfg.classifier), rules)
+        sub = tracks.assign(probability=prob)[prob > 0]
         r = evaluate(sub, ann, exc, uids)
         curves[label] = r
         rows.append({"rules": label, "cpm": r["cpm"], **{f"@{k}": v for k, v in r["sens_at"].items()}})

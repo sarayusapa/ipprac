@@ -51,7 +51,9 @@ def main():
     sub = tables[tables["probability"] > 0][["seriesuid", "coordX", "coordY", "coordZ", "probability"]]
     sub.to_csv(out / "submission.csv", index=False)
     if fpr is not None:
-        fpr.to_csv(out / "submission_fpr.csv", index=False)
+        fpr.drop(columns=["track_ids"], errors="ignore").to_csv(out / "submission_fpr.csv", index=False)
+        if "track_ids" in fpr:
+            fpr[["seriesuid", "coordX", "coordY", "coordZ", "track_ids"]].to_csv(out / "fpr_links.csv", index=False)
     timings.to_csv(out / "timings.csv", index=False)
     pd.Series([p.stem for p in paths]).to_csv(out / "seriesuids.txt", index=False, header=False)
 

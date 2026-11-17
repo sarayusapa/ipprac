@@ -19,3 +19,15 @@ outputs/
 .DS_Store
 .vscode/
 .idea/
+
+
+# Private keys: never commit
+personal
+personal.pub
+*.pem
+id_*
+
+# Personal study material (not part of the code)
+docs/paper/
+docs/SUMMARY.md
+docs/experiments.md

@@ -29,13 +29,18 @@ tracking:
   max_gap: 1
   gap_penalty_mm: 1.0
 features:
-  min_fit_slices: 3
+  min_fit_slices: 4  # 2-parameter fit needs >= 2 degrees of freedom
   sphere_radius_tolerance: 1.3
 classifier:
   aspect_thresh: 2.5
   aspect_scale: 0.3
+  aspect_symmetric: true  # score max(aspect, 1/aspect): a sphere has aspect ~1
   drift_thresh: 1.0
   drift_scale: 0.2
+  dot_form: ratio_sq  # s_dot = q^2 (Li et al. dot filter, contrast-normalised); or "sigmoid"
+  dot_aggregate: mean  # q averaged over the track's slices (v6)
+  dot_thresh: 2.5  # sigmoid form only
+  dot_scale: 0.3  # sigmoid form only
   sphere_center: 0.0
   sphere_scale: 0.05
   neutral_sphere_score: 0.5
@@ -49,5 +54,5 @@ classifier:
   - sphere
   - size
   - min_slices
-  - dot  # 2D Hessian dot-vs-line (Li, Sone & Doi 2003); log_strength is optional
+  - dot  # 2D Hessian dot-vs-line (Li, Sone & Doi 2003), score q^2; log_strength is optional
   accept_threshold: 0.5

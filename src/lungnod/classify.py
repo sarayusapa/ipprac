@@ -1,6 +1,6 @@
 """Step 06 - Rule-based classification (Section 8.6). No training.
 
-    s_aspect  = sigmoid((2.5 - aspect) / 0.3)
+    s_aspect  = sigmoid((2.5 - max(aspect, 1/aspect)) / 0.3)   sphere: aspect ~ 1 both ways
     s_drift   = sigmoid((1.0 - drift_ratio) / 0.2)       drift_ratio = lateral shift / radius
     s_sphere  = sigmoid((sphere_gain - 0) / 0.05)     (neutral 0.5 if < 3 slices)
     s_size    = 1 if 3 mm <= max diameter <= 30 mm else 0
@@ -8,11 +8,11 @@
     s_log     = min(peak LoG response / (2/e), 1)        detector confidence; 2/e is the
                                                        response of a full-contrast disc [11]
     s_branch  = exp(-0.5 * branches)                  (optional, off by default)
-    s_dot     = sigmoid((2.5 - inplane_aspect) / 0.3)  in-plane elongation from the 2D Hessian
-                (Li, Sone & Doi 2003): ratio q = |l_small|/|l_large| (median over slices),
-                inplane_aspect = sqrt(3/q - 2), the axis ratio of an ellipse with that q
-                (Gaussian blob model at the LoG scale sigma = r/sqrt2). Same threshold and
-                softness as the 3D aspect rule; contrast-invariant, so it can replace s_log.
+    s_dot     = q^2, q = |l_small|/|l_large| of the 2D Hessian at the blob's LoG peak and
+                scale, median over slices (Li, Sone & Doi 2003: their 2D dot filter
+                |l2|^2/|l1| divided by |l1|, i.e. contrast-normalised). Disc 1, line 0.
+                Alternative (dot_form="sigmoid"): sigmoid((2.5 - inplane_aspect) / 0.3),
+                inplane_aspect = sqrt(3/q - 2) (ellipse axis ratio with that q).
 
     score = product of the enabled rules, in [0, 1]  -> ranks candidates for FROC.
 
@@ -41,27 +41,40 @@ def inplane_aspect(q) -> np.ndarray:
     return np.sqrt(np.maximum(3.0 / q - 2.0, 1.0))
 
 
+def _dot_score(q, cfg: ClassifierConfig) -> np.ndarray:
+    q = np.clip(np.asarray(q, float), 0.0, 1.0)
+    if cfg.dot_form == "ratio_sq":
+        return q * q
+    if cfg.dot_form == "sigmoid":
+        return expit((cfg.dot_thresh - inplane_aspect(q)) / cfg.dot_scale)
+    raise ValueError(f"unknown dot_form {cfg.dot_form!r}")
+
+
 def rule_scores(f: Mapping, cfg: ClassifierConfig) -> dict[str, np.ndarray]:
     aspect = np.asarray(f["aspect"], float)
+    a_eff = np.maximum(aspect, 1.0 / np.maximum(aspect, 1e-6)) if cfg.aspect_symmetric else aspect
     drift = np.asarray(f["drift_ratio"], float)
     log_resp = np.asarray(f["max_log_response"], float)
     gain = np.asarray(f["sphere_gain"], float)
     diam = np.asarray(f["max_diameter_mm"], float)
     n_sl = np.asarray(f["n_slices"], float)
     br = np.asarray(f["branches"], float)
-    q = np.asarray(f["hess_ratio"], float) if "hess_ratio" in f else np.ones_like(aspect)
+    qcol = "hess_ratio" if cfg.dot_aggregate == "median" else f"hess_ratio_{cfg.dot_aggregate}"
+    if qcol not in f:
+        qcol = "hess_ratio"
+    q = np.asarray(f[qcol], float) if qcol in f else np.ones_like(aspect)
 
     s_sphere = expit((gain - cfg.sphere_center) / cfg.sphere_scale)
     s_sphere = np.where(np.isnan(gain), cfg.neutral_sphere_score, s_sphere)
     return {
-        "aspect": expit((cfg.aspect_thresh - aspect) / cfg.aspect_scale),
+        "aspect": expit((cfg.aspect_thresh - a_eff) / cfg.aspect_scale),
         "drift": expit((cfg.drift_thresh - drift) / cfg.drift_scale),
         "sphere": s_sphere,
         "size": ((diam >= cfg.diam_min_mm) & (diam <= cfg.diam_max_mm)).astype(float),
         "min_slices": (n_sl >= cfg.min_slices).astype(float),
         "log_strength": np.clip(log_resp / LOG_MAX_RESPONSE, 0.0, 1.0),
         "branching": np.exp(-cfg.branch_scale * br),
-        "dot": expit((cfg.aspect_thresh - inplane_aspect(q)) / cfg.aspect_scale),
+        "dot": _dot_score(q, cfg),
     }
 
 
@@ -87,9 +100,8 @@ def explain(f: Mapping, s: Mapping, cfg: ClassifierConfig) -> str:
             f"diameter {f['max_diameter_mm']:.1f} mm outside [{cfg.diam_min_mm:g}, {cfg.diam_max_mm:g}]"
         )
     if "aspect" in rules and s["aspect"] < 0.5:
-        reasons.append(
-            f"lifetime {f['lifetime_mm']:.1f} mm, aspect {f['aspect']:.1f} (> {cfg.aspect_thresh:g})"
-        )
+        bound = f"> {cfg.aspect_thresh:g}" if f["aspect"] >= 1 else f"< 1/{cfg.aspect_thresh:g}"
+        reasons.append(f"lifetime {f['lifetime_mm']:.1f} mm, aspect {f['aspect']:.2f} ({bound})")
     if "drift" in rules and s["drift"] < 0.5:
         reasons.append(
             f"centre shifts {f['drift_ratio']:.1f} x radius (> {cfg.drift_thresh:g})"
@@ -100,8 +112,9 @@ def explain(f: Mapping, s: Mapping, cfg: ClassifierConfig) -> str:
         reasons.append(f"weak blob (LoG strength {s['log_strength']:.2f})")
     if "branching" in rules and s["branching"] < 0.5:
         reasons.append(f"branches {int(f['branches'])}")
-    if "dot" in rules and s["dot"] < 0.5:
-        reasons.append(f"line-like in plane (in-plane aspect {float(inplane_aspect(f['hess_ratio'])):.1f})")
+    q = f["hess_ratio"] if "hess_ratio" in f else 1.0
+    if "dot" in rules and inplane_aspect(q) > cfg.dot_thresh:
+        reasons.append(f"line-like in plane (Hessian ratio {float(q):.2f}, in-plane aspect {float(inplane_aspect(q)):.1f})")
     prob = float(np.prod([s[r] for r in rules]))
     if prob >= cfg.accept_threshold:
         return "accepted"
